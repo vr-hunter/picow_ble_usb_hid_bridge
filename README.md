@@ -40,9 +40,11 @@ working. Input reports are forwarded byte for byte. The USB device re-enumerates
 once the BLE link is up, which is what makes the PC read the new descriptor.
 
 **Connection handling.** The bridge alternates between reconnecting to a bonded
-device and scanning for new ones. Once the link is encrypted it asks for a
-12.5-15 ms connection interval, so a power-saving default on the peripheral does
-not turn into input lag.
+device and scanning for new ones. It supports Resolvable Private Addresses (RPA)
+via Identity Resolving Keys (IRK), enabling automatic reconnection even when
+peripherals periodically rotate their Bluetooth address for privacy. Once the link
+is encrypted it asks for a 12.5-15 ms connection interval, so a power-saving
+default on the peripheral does not turn into input lag.
 
 ## Documentation
 
