@@ -12,7 +12,7 @@ It operates as a BLE Central (Host), forwarding input data from the connected BL
   Because it is recognized as a wired USB device, it is compatible with USB switches.   
   *(Note: Compatibility with KVM switches is currently unverified.)*  
 
-*For the opposite direction, USB to BLE, see
+**Note:** For the opposite direction, USB to BLE, see
 [pico_usb_ble_hid_bridge](https://github.com/shiomachisoft/pico_usb_ble_hid_bridge).
 
 <img width="716" height="391" alt="image" src="https://github.com/user-attachments/assets/6d4410d5-2912-4bd5-93dc-8aef206fb2b0" />
