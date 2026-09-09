@@ -17,6 +17,16 @@ It operates as a BLE Central (Host), forwarding input data from the connected BL
 
 <img width="716" height="391" alt="image" src="https://github.com/user-attachments/assets/6d4410d5-2912-4bd5-93dc-8aef206fb2b0" />
 
+## Source Code & Binaries
+
+The full source code for this program and the ready-to-flash binary (.uf2 file) are available in this repository:
+
+- **Pre-built binaries**: Available under [`bin/`](bin/)
+- **Build from source**: See [docs/build.md](docs/build.md) for detailed build instructions using VS Code and the Pico SDK.
+
+> **Note:**  
+> The source code is written in C using the Pico SDK.
+
 ## Usage
 
 1.  Plug the board into a USB port. The LED blinks while nothing is connected
