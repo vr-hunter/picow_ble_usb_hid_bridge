@@ -61,7 +61,7 @@ default on the peripheral does not turn into input lag.
 
 - [Building in VS Code](docs/build.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Verified devices](docs/verified_devices.md)
+- [Verified Devices](docs/verified_devices.md)
 
 ## License
 See LICENSE.TXT.
