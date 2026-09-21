@@ -39,10 +39,7 @@
 // device slot index (0 .. MAX_HID_DEVICES-1). CMN_QUE_KIND_NUM is therefore the
 // total number of queues. Every queue carries HID reports, so callers pass the
 // device slot directly as the queue index.
-typedef enum _E_CMN_QUE_KIND { 
-    CMN_QUE_KIND_HID_RPT_0 = 0, // HID Report Queue, device slot 0
-    CMN_QUE_KIND_NUM          // Number of queue types (= MAX_HID_DEVICES)
-} E_CMN_QUE_KIND;
+#define CMN_QUE_KIND_NUM MAX_HID_DEVICES
 
 #pragma pack(1)
 

@@ -183,6 +183,12 @@ bool send_hid_report(ULONG slot)
                 CMN_AdvanceQueue(slot);
                 bRet = true;
             }
+        } else {
+            static uint32_t not_ready_count[CMN_QUE_KIND_NUM];
+            not_ready_count[slot]++;
+            if (not_ready_count[slot] <= 3 || (not_ready_count[slot] % 200) == 0) {
+                USB_LOG("Slot %lu: HID not ready (%lu checks)\n", (unsigned long)slot, (unsigned long)not_ready_count[slot]);
+            }
         }
     }
 

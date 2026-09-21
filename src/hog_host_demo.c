@@ -890,6 +890,17 @@ static void hid_handle_input_report(uint16_t cid, uint8_t service_index, uint8_t
     int slot = find_slot_by_cid(cid);
     if (slot < 0 || slots[slot].state != SLOT_READY) return;
 
+    static uint32_t report_count[MAX_HID_DEVICES];
+    report_count[slot]++;
+    if (report_count[slot] <= 3 || (report_count[slot] % 100) == 0) {
+        BLE_LOG("Slot %d: BLE report #%lu id=%u len=%u data=[%02x %02x %02x %02x]\n",
+                slot, (unsigned long)report_count[slot], report_id, report_len,
+                report_len > 0 ? report[0] : 0,
+                report_len > 1 ? report[1] : 0,
+                report_len > 2 ? report[2] : 0,
+                report_len > 3 ? report[3] : 0);
+    }
+
     static ST_HID_RPT stHidRpt;
     stHidRpt.report_id  = report_id;
     stHidRpt.report_len = report_len;
