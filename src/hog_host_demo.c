@@ -605,6 +605,7 @@ static void coordinator_publish_snapshot(void)
         if (slots[i].state == SLOT_READY) {
             snap.hids_cid[snap.count] = slots[i].hids_cid;
             snap.report_len[snap.count] = hids_host_descriptor_storage_get_descriptor_len(slots[i].hids_cid, 0);
+            snap.slot[snap.count] = (uint8_t)i;
             snap.count++;
         }
     }

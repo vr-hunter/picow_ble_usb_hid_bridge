@@ -24,6 +24,7 @@ typedef struct {
     uint8_t  count;                 // number of READY devices (0..MAX_HID_DEVICES)
     uint16_t hids_cid[MAX_HID_DEVICES];  // BTstack HIDS client id per compact position
     uint16_t report_len[MAX_HID_DEVICES]; // report descriptor length per position
+    uint8_t  slot[MAX_HID_DEVICES];    // physical slot index backing each compact position
 } usb_ready_snapshot_t;
 
 // Set by Core 1 whenever the READY set changes, so Core 0 re-enumerates the USB

@@ -43,7 +43,7 @@ volatile bool g_usb_reinit_request = false; // Flag to request USB re-initializa
 //--------------------------------------------------------------------+
 void usb_dev_main(void);
 void hid_task(void);
-bool send_hid_report(ULONG slot);
+bool send_hid_report(uint8_t position, ULONG physical_slot);
 
 extern void ble_host_main(void);
 
@@ -167,27 +167,33 @@ void tud_resume_cb(void)
 
 // Dequeue and send one HID report from the queue to the USB host.
 // return true if a report was successfully sent, false otherwise.
-bool send_hid_report(ULONG slot)
+// Dequeue and send one HID report from the queue to the USB host.
+// 'position' is the compact USB interface index (0..count-1); 'physical_slot'
+// is the BLE slot whose report queue feeds it. The two differ after a
+// lower-numbered device disconnects and the remaining ones renumber.
+bool send_hid_report(uint8_t position, ULONG physical_slot)
 {
     static ST_HID_RPT stHidRpt;
     bool bRet = false;
 
-    if (CMN_PeekQueue(slot, &stHidRpt)) {
+    if (CMN_PeekQueue(physical_slot, &stHidRpt)) {
         if ( tud_suspended()) {
             tud_remote_wakeup();
             return bRet;
         }
-        if (tud_hid_n_ready((uint8_t)slot)) {
-            if (tud_hid_n_report((uint8_t)slot, 0, stHidRpt.report, stHidRpt.report_len)) {
-                USB_LOG("HID report sent on slot %lu (%u bytes)\n", (unsigned long)slot, stHidRpt.report_len);
-                CMN_AdvanceQueue(slot);
+        if (tud_hid_n_ready(position)) {
+            if (tud_hid_n_report(position, 0, stHidRpt.report, stHidRpt.report_len)) {
+                USB_LOG("HID report sent pos %u <- slot %lu (%u bytes)\n",
+                        position, (unsigned long)physical_slot, stHidRpt.report_len);
+                CMN_AdvanceQueue(physical_slot);
                 bRet = true;
             }
         } else {
-            static uint32_t not_ready_count[CMN_QUE_KIND_NUM];
-            not_ready_count[slot]++;
-            if (not_ready_count[slot] <= 3 || (not_ready_count[slot] % 200) == 0) {
-                USB_LOG("Slot %lu: HID not ready (%lu checks)\n", (unsigned long)slot, (unsigned long)not_ready_count[slot]);
+            static uint32_t not_ready_count[MAX_HID_DEVICES];
+            not_ready_count[position]++;
+            if (not_ready_count[position] <= 3 || (not_ready_count[position] % 200) == 0) {
+                USB_LOG("Pos %u: HID not ready (%lu checks)\n",
+                        position, (unsigned long)not_ready_count[position]);
             }
         }
     }
@@ -200,8 +206,10 @@ bool send_hid_report(ULONG slot)
 //--------------------------------------------------------------------+
 void hid_task(void)
 {
-    for (ULONG slot = 0; slot < CMN_QUE_KIND_NUM; slot++) {
-        send_hid_report(slot);
+    usb_ready_snapshot_t snap;
+    if (!hid_bridge_get_ready_snapshot(&snap)) return;
+    for (uint8_t pos = 0; pos < snap.count; pos++) {
+        send_hid_report(pos, (ULONG)snap.slot[pos]);
     }
 }
 
