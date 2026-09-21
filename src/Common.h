@@ -26,17 +26,22 @@
 #endif
 
 // [Definitions]
-// Maximum size of the HID queue
+#include "hid_bridge.h"
+
+// Maximum depth of each per-device HID report queue
 #define CMN_QUE_DATA_MAX_HID_RPT 32
 
 // Maximum size of the HID report data
 #define CMN_HID_RPT_DATA_SIZE 512
 
 // [Enumerations]
-// Queue types
+// There is one report queue per bridged device; the queue index equals the
+// device slot index (0 .. MAX_HID_DEVICES-1). CMN_QUE_KIND_NUM is therefore the
+// total number of queues. Every queue carries HID reports, so callers pass the
+// device slot directly as the queue index.
 typedef enum _E_CMN_QUE_KIND { 
-    CMN_QUE_KIND_HID_RPT = 0, // HID Report Queue
-    CMN_QUE_KIND_NUM          // Number of queue types
+    CMN_QUE_KIND_HID_RPT_0 = 0, // HID Report Queue, device slot 0
+    CMN_QUE_KIND_NUM          // Number of queue types (= MAX_HID_DEVICES)
 } E_CMN_QUE_KIND;
 
 #pragma pack(1)
@@ -68,5 +73,15 @@ void CMN_ClearQueue(ULONG iQue);
 void CMN_EntrySpinLock(void);
 void CMN_ExitSpinLock(void);
 void CMN_Init(void);
+
+// READY-set snapshot shared between cores. Core 1 (BLE) publishes it whenever
+// the set of connected/READY devices changes; Core 0 (USB) reads it to build
+// its descriptors and to route forwarded reports. Both are atomic w.r.t. the
+// shared spinlock.
+void CMN_PublishReadySnapshot(const usb_ready_snapshot_t *snap);
+bool CMN_GetReadySnapshot(usb_ready_snapshot_t *out);
+
+// Drop every pending report across all device queues (used on USB re-init)
+void CMN_ClearAllQueues(void);
 
 #endif

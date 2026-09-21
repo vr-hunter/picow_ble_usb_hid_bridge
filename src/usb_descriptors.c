@@ -26,23 +26,14 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "hid_bridge.h"
 
-/* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
- * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
- *
- * Auto ProductID layout's Bitmap:
- * [MSB]         HID | MSC | CDC         [LSB]
- */
 #define _PID_MAP(itf, n)    ( (CFG_TUD_##itf) << (n) )
 #define USB_PID             (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | _PID_MAP(HID, 2) | \
-                             _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
+                              _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
 
 #define USB_VID     0xCafe
 #define USB_BCD     0x0200
-
-extern bool is_ble_app_state_ready(void);
-extern const uint8_t* get_ble_hid_report_descriptor_data(void);
-extern uint16_t get_ble_hid_report_descriptor_len(void);
 
 //--------------------------------------------------------------------+
 // Device Descriptors
@@ -68,8 +59,6 @@ tusb_desc_device_t const desc_device =
     .bNumConfigurations     = 0x01
 };
 
-// Invoked when received GET DEVICE DESCRIPTOR
-// Application return pointer to descriptor
 uint8_t const * tud_descriptor_device_cb(void)
 {
     return (uint8_t const *) &desc_device;
@@ -79,128 +68,106 @@ uint8_t const * tud_descriptor_device_cb(void)
 // HID Report Descriptor
 //--------------------------------------------------------------------+
 
-uint8_t const desc_hid_report[] =
+// Fallback descriptor used when no BLE device is connected.
+// A minimal keyboard descriptor so the USB stack always has something valid.
+uint8_t const desc_hid_report_fallback[] =
 {
-    TUD_HID_REPORT_DESC_KEYBOARD( HID_REPORT_ID(REPORT_ID_KEYBOARD      )),
-    TUD_HID_REPORT_DESC_MOUSE   ( HID_REPORT_ID(REPORT_ID_MOUSE         )),
-    TUD_HID_REPORT_DESC_CONSUMER( HID_REPORT_ID(REPORT_ID_CONSUMER_CONTROL )),
-    TUD_HID_REPORT_DESC_GAMEPAD ( HID_REPORT_ID(REPORT_ID_GAMEPAD       ))
+    TUD_HID_REPORT_DESC_KEYBOARD( HID_REPORT_ID(REPORT_ID_KEYBOARD) )
 };
 
-// Invoked when received GET HID REPORT DESCRIPTOR
-// Application return pointer to descriptor
-// Descriptor contents must exist long enough for transfer to complete
 uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 {
-    (void) instance;
-    // When connected via BLE, return the Report Descriptor from the BLE device
-    if (is_ble_app_state_ready() && get_ble_hid_report_descriptor_data() != NULL) {
-        return get_ble_hid_report_descriptor_data();
-    } else {
-        // When not connected, return the default descriptor
-        return desc_hid_report;
-    }   
+    usb_ready_snapshot_t snap;
+    if (hid_bridge_get_ready_snapshot(&snap) && instance < snap.count) {
+        uint16_t len;
+        const uint8_t *desc = hid_bridge_get_report_descriptor(instance, &len);
+        if (desc != NULL && len > 0) {
+            return desc;
+        }
+    }
+    return desc_hid_report_fallback;
 }
 
 //--------------------------------------------------------------------+
-// Configuration Descriptor
+// Configuration Descriptor (dynamic: one HID interface per READY device)
 //--------------------------------------------------------------------+
 
-enum
-{
-    ITF_NUM_HID,
-    ITF_NUM_TOTAL
-};
+// Max size: config header + N * (interface + hid + endpoint)
+#define CONFIG_BUF_SIZE (TUD_CONFIG_DESC_LEN + MAX_HID_DEVICES * (TUD_HID_DESC_LEN))
 
-#define     CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+static uint8_t desc_configuration[CONFIG_BUF_SIZE] __attribute__((aligned(4)));
 
-#define EPNUM_HID   0x81
-
-#if 0
-uint8_t const desc_configuration[] =
-{
-    // Config number, interface count, string index, total length, attribute, power in mA
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-
-    // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 5)
-};
-#endif
-#define DYNAMIC_CONFIG_BUF_SIZE (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
-// Align the buffer to 4 bytes to ensure efficient and safe access
-static uint8_t desc_configuration[DYNAMIC_CONFIG_BUF_SIZE] __attribute__((aligned(4)));
-
-
-// Invoked when received GET CONFIGURATION DESCRIPTOR
-// Application return pointer to descriptor
-// Descriptor contents must exist long enough for transfer to complete
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
-    (void) index; // for multiple configurations
+    (void) index;
 
-    // This example use the same configuration for both high and full speed mode
-    // Pointer to the current position in the descriptor buffer
-    uint8_t *p_desc = desc_configuration;
-    uint8_t const * const desc_end = p_desc + DYNAMIC_CONFIG_BUF_SIZE;
-
-    // Determine which report descriptor to use
-    uint16_t report_desc_len;
-    if (is_ble_app_state_ready() && get_ble_hid_report_descriptor_len() > 0) {
-        report_desc_len = get_ble_hid_report_descriptor_len();
-    } else {
-        report_desc_len = sizeof(desc_hid_report);
+    usb_ready_snapshot_t snap;
+    uint8_t num_ifs = 0;
+    if (hid_bridge_get_ready_snapshot(&snap)) {
+        num_ifs = snap.count;
+    }
+    if (num_ifs == 0) {
+        num_ifs = 1;
     }
 
-    // 1. Build Configuration Descriptor
-    tusb_desc_configuration_t *config_desc = (tusb_desc_configuration_t*) p_desc;
+    uint8_t *p_desc = desc_configuration;
+    uint8_t const * const desc_end = p_desc + CONFIG_BUF_SIZE;
+
+    tusb_desc_configuration_t *config_desc = (tusb_desc_configuration_t *) p_desc;
     config_desc->bLength = sizeof(tusb_desc_configuration_t);
     config_desc->bDescriptorType = TUSB_DESC_CONFIGURATION;
-    // wTotalLength will be set later
-    // config_desc->wTotalLength is set at the end or calculated dynamically
-    config_desc->bNumInterfaces = ITF_NUM_TOTAL;
+    config_desc->bNumInterfaces = num_ifs;
     config_desc->bConfigurationValue = 1;
     config_desc->iConfiguration = 0;
     config_desc->bmAttributes = TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP;
-    // Request 500mA (250 * 2mA) to ensure sufficient power for Pico W (WiFi/BLE)
     config_desc->bMaxPower = 250;
     p_desc += sizeof(tusb_desc_configuration_t);
 
-    // 2. Build HID Interface Descriptor
-    tusb_desc_interface_t *if_desc = (tusb_desc_interface_t*) p_desc;
-    if_desc->bLength = sizeof(tusb_desc_interface_t);
-    if_desc->bDescriptorType = TUSB_DESC_INTERFACE;
-    if_desc->bInterfaceNumber = ITF_NUM_HID;
-    if_desc->bAlternateSetting = 0;
-    if_desc->bNumEndpoints = 1;
-    if_desc->bInterfaceClass = TUSB_CLASS_HID;
-    if_desc->bInterfaceSubClass = HID_SUBCLASS_NONE;
-    if_desc->bInterfaceProtocol = HID_ITF_PROTOCOL_NONE;
-    if_desc->iInterface = 0;
-    p_desc += sizeof(tusb_desc_interface_t);
+    for (uint8_t i = 0; i < num_ifs; i++) {
+        uint16_t report_desc_len = 0;
+        if (i < snap.count) {
+            const uint8_t *rd = hid_bridge_get_report_descriptor(i, &report_desc_len);
+            if (rd == NULL || report_desc_len == 0) {
+                report_desc_len = sizeof(desc_hid_report_fallback);
+            }
+        } else {
+            report_desc_len = sizeof(desc_hid_report_fallback);
+        }
 
-    // 3. Build HID Descriptor
-    // Use tu_unaligned_write16() for fields that might not be aligned.
-    *p_desc++ = 9; // bLength
-    *p_desc++ = HID_DESC_TYPE_HID; // bDescriptorType
-    tu_unaligned_write16(p_desc, 0x0111); p_desc += 2; // bcdHID
-    *p_desc++ = 0; // bCountryCode
-    *p_desc++ = 1; // bNumDescriptors
-    *p_desc++ = HID_DESC_TYPE_REPORT; // bDescriptorType
-    tu_unaligned_write16(p_desc, report_desc_len); p_desc += 2; // wDescriptorLength
-    
-    // 4. Build Endpoint Descriptor
-    tusb_desc_endpoint_t *ep_desc = (tusb_desc_endpoint_t*) p_desc;
-    // Set wTotalLength
-    // Use tu_htole16 for portability (though RP2040 is little-endian)
-    config_desc->wTotalLength = tu_htole16((uint16_t)(p_desc - desc_configuration) + sizeof(tusb_desc_endpoint_t));
+        // Interface descriptor
+        tusb_desc_interface_t *if_desc = (tusb_desc_interface_t *) p_desc;
+        if_desc->bLength = sizeof(tusb_desc_interface_t);
+        if_desc->bDescriptorType = TUSB_DESC_INTERFACE;
+        if_desc->bInterfaceNumber = i;
+        if_desc->bAlternateSetting = 0;
+        if_desc->bNumEndpoints = 1;
+        if_desc->bInterfaceClass = TUSB_CLASS_HID;
+        if_desc->bInterfaceSubClass = HID_SUBCLASS_NONE;
+        if_desc->bInterfaceProtocol = HID_ITF_PROTOCOL_NONE;
+        if_desc->iInterface = 0;
+        p_desc += sizeof(tusb_desc_interface_t);
 
-    ep_desc->bLength = sizeof(tusb_desc_endpoint_t);
-    ep_desc->bDescriptorType = TUSB_DESC_ENDPOINT;
-    ep_desc->bEndpointAddress = EPNUM_HID;
-    ep_desc->bmAttributes.xfer = TUSB_XFER_INTERRUPT;
-    ep_desc->wMaxPacketSize = CFG_TUD_HID_EP_BUFSIZE;
-    ep_desc->bInterval = 1;
-    p_desc += sizeof(tusb_desc_endpoint_t);
+        // HID descriptor
+        *p_desc++ = 9;
+        *p_desc++ = HID_DESC_TYPE_HID;
+        tu_unaligned_write16(p_desc, 0x0111); p_desc += 2;
+        *p_desc++ = 0;
+        *p_desc++ = 1;
+        *p_desc++ = HID_DESC_TYPE_REPORT;
+        tu_unaligned_write16(p_desc, report_desc_len); p_desc += 2;
+
+        // Endpoint descriptor
+        tusb_desc_endpoint_t *ep_desc = (tusb_desc_endpoint_t *) p_desc;
+        ep_desc->bLength = sizeof(tusb_desc_endpoint_t);
+        ep_desc->bDescriptorType = TUSB_DESC_ENDPOINT;
+        ep_desc->bEndpointAddress = 0x80 + 1 + i;
+        ep_desc->bmAttributes.xfer = TUSB_XFER_INTERRUPT;
+        ep_desc->wMaxPacketSize = CFG_TUD_HID_EP_BUFSIZE;
+        ep_desc->bInterval = 1;
+        p_desc += sizeof(tusb_desc_endpoint_t);
+    }
+
+    config_desc->wTotalLength = tu_htole16((uint16_t)(p_desc - desc_configuration));
 
     TU_ASSERT(p_desc <= desc_end, NULL);
 
@@ -211,7 +178,6 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 // String Descriptors
 //--------------------------------------------------------------------+
 
-// String Descriptor Index
 enum {
     STRID_LANGID = 0,
     STRID_MANUFACTURER,
@@ -219,19 +185,16 @@ enum {
     STRID_SERIAL,
 };
 
-// array of pointer to string descriptors
 char const *string_desc_arr[] =
 {
-    (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
-    "Shiomachi Software",          // 1: Manufacturer
-    "BLE to USB HID Bridge",       // 2: Product
-    NULL,                          // 3: Serials will use unique ID if possible
+    (const char[]) { 0x09, 0x04 },
+    "Shiomachi Software",
+    "BLE to USB HID Bridge",
+    NULL,
 };
 
 static uint16_t _desc_str[32 + 1];
 
-// Invoked when received GET STRING DESCRIPTOR request
-// Application return pointer to descriptor, whose contents must exist long enough for transfer to complete
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     (void) langid;
     size_t chr_count;
@@ -247,27 +210,17 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
             break;
 
         default:
-            // Note: the 0xEE index string is a Microsoft OS 1.0 Descriptors.
-            // https://docs.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-defined-usb-descriptors
-
             if ( !(index < sizeof(string_desc_arr) / sizeof(string_desc_arr[0])) ) return NULL;
-
             const char *str = string_desc_arr[index];
-
-            // Cap at max char
             chr_count = strlen(str);
-            size_t const max_count = sizeof(_desc_str) / sizeof(_desc_str[0]) - 1; // -1 for string type
+            size_t const max_count = sizeof(_desc_str) / sizeof(_desc_str[0]) - 1;
             if ( chr_count > max_count ) chr_count = max_count;
-
-            // Convert ASCII string into UTF-16
             for ( size_t i = 0; i < chr_count; i++ ) {
                 _desc_str[1 + i] = str[i];
             }
             break;
     }
 
-    // first byte is length (including header), second byte is string type
     _desc_str[0] = (uint16_t) ((TUSB_DESC_STRING << 8) | (2 * chr_count + 2));
-
     return _desc_str;
 }
