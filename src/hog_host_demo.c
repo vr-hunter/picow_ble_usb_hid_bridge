@@ -488,18 +488,36 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
 static void handle_gatt_client_event(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
 {
     UNUSED(packet_type);
+    UNUSED(channel);
     UNUSED(size);
 
     if (hci_event_packet_get_type(packet) != HCI_EVENT_GATTSERVICE_META) {
         return;
     }
 
-    int slot = find_slot_by_cid(channel);
+    uint8_t subevent = hci_event_gattservice_meta_get_subevent_code(packet);
+
+    uint16_t cid;
+    switch (subevent) {
+        case GATTSERVICE_SUBEVENT_HID_SERVICE_CONNECTED:
+            cid = gattservice_subevent_hid_service_connected_get_hids_cid(packet);
+            break;
+        case GATTSERVICE_SUBEVENT_HID_SERVICE_DISCONNECTED:
+            cid = gattservice_subevent_hid_service_disconnected_get_hids_cid(packet);
+            break;
+        case GATTSERVICE_SUBEVENT_HID_REPORT:
+            cid = gattservice_subevent_hid_report_get_hids_cid(packet);
+            break;
+        default:
+            return;
+    }
+
+    int slot = find_slot_by_cid(cid);
     if (slot < 0) return;
 
     uint8_t status;
 
-    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+    switch (subevent) {
         case GATTSERVICE_SUBEVENT_HID_SERVICE_CONNECTED:
             status = gattservice_subevent_hid_service_connected_get_status(packet);
             switch (status) {
@@ -528,7 +546,7 @@ static void handle_gatt_client_event(uint8_t packet_type, uint16_t channel, uint
 
         case GATTSERVICE_SUBEVENT_HID_REPORT:
             hid_handle_input_report(
-                channel,
+                cid,
                 gattservice_subevent_hid_report_get_service_index(packet),
                 gattservice_subevent_hid_report_get_report_id(packet),
                 gattservice_subevent_hid_report_get_report(packet),
