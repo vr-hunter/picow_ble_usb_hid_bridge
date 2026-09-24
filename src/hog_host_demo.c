@@ -67,6 +67,10 @@
 
 #define MAX_PENDING_RPA_LOOKUPS 4
 
+// Debug scaffolding: set to 1 to compile in the per-advertisement scan log and
+// the 5s coordinator/slot heartbeat. 0 (default) keeps the runtime log clean.
+#define HOG_HOST_DEBUG 0
+
 typedef struct {
     bd_addr_t addr;
     bool has_hid_service;
@@ -120,6 +124,11 @@ static uint8_t hid_descriptor_storage[MAX_HID_DEVICES * 2048];
 
 static btstack_timer_source_t connection_timer;
 static btstack_timer_source_t led_timer;
+#if HOG_HOST_DEBUG
+static btstack_timer_source_t heartbeat_timer;
+
+#define HEARTBEAT_INTERVAL_MS 5000
+#endif
 
 static btstack_packet_callback_registration_t hci_event_callback_registration;
 static btstack_packet_callback_registration_t sm_event_callback_registration;
@@ -156,6 +165,9 @@ static void hog_start_scan(void);
 static void hog_scan_timeout(btstack_timer_source_t * ts);
 static void hog_connection_timeout(btstack_timer_source_t * ts);
 static void hog_reconnect_timeout(btstack_timer_source_t * ts);
+#if HOG_HOST_DEBUG
+static void heartbeat_handler(btstack_timer_source_t * ts);
+#endif
 static void handle_outgoing_connection_error(int slot);
 static void request_hid_connection_parameters(int slot);
 
@@ -229,6 +241,12 @@ int btstack_main(int argc, const char * argv[])
     btstack_run_loop_set_timer(&led_timer, LED_BLINKING_INTERVAL_MS);
     btstack_run_loop_add_timer(&led_timer);
 
+#if HOG_HOST_DEBUG
+    btstack_run_loop_set_timer_handler(&heartbeat_timer, &heartbeat_handler);
+    btstack_run_loop_set_timer(&heartbeat_timer, HEARTBEAT_INTERVAL_MS);
+    btstack_run_loop_add_timer(&heartbeat_timer);
+#endif
+
     hci_power_control(HCI_POWER_ON);
     return 0;
 }
@@ -260,6 +278,25 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     bd_addr_type_t raw_addr_type = gap_event_advertising_report_get_address_type(packet);
                     bd_addr_type_t adv_addr_type = (bd_addr_type_t)(raw_addr_type & 1);
                     bool has_hid_service = adv_event_contains_hid_service(packet);
+
+#if HOG_HOST_DEBUG
+                    // Diagnostic: log every advertisement (rate-limited to ~1/s) so
+                    // we can see exactly what the scan is receiving after a
+                    // disconnect — is the device re-advertising, and with what
+                    // address / type / HID flag / bonded match?
+                    {
+                        static uint32_t s_last_adv_diag_ms = 0;
+                        uint32_t now_ms = btstack_run_loop_get_time_ms();
+                        if (now_ms - s_last_adv_diag_ms >= 1000) {
+                            s_last_adv_diag_ms = now_ms;
+                            int bond_idx = find_bonded_entry(adv_addr);
+                            BLE_LOG("ADV %s type %u hid=%d bond=%d hb=%d n=%d\n",
+                                    bd_addr_to_str(adv_addr), adv_addr_type,
+                                    (int)has_hid_service, bond_idx,
+                                    (int)has_bonded_device, bonded_list.count);
+                        }
+                    }
+#endif
 
                     if (has_bonded_device && is_resolvable_private_address(adv_addr_type, adv_addr)) {
                         if (!is_rpa_lookup_pending(adv_addr)) {
@@ -307,7 +344,11 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     uint16_t con_handle = hci_event_disconnection_complete_get_connection_handle(packet);
                     uint8_t reason = hci_event_disconnection_complete_get_reason(packet);
                     int slot = find_slot_by_con_handle(con_handle);
-                    if (slot < 0) break;
+                    if (slot < 0) {
+                        BLE_LOG("HCI disconnect (con_handle 0x%04x, reason 0x%02x) did not match any slot\n",
+                                con_handle, reason);
+                        break;
+                    }
 
                     BLE_LOG("Slot %d disconnected (Reason: 0x%02x)\n", slot, reason);
 
@@ -542,6 +583,18 @@ static void handle_gatt_client_event(uint8_t packet_type, uint16_t channel, uint
 
         case GATTSERVICE_SUBEVENT_HID_SERVICE_DISCONNECTED:
             BLE_LOG("Slot %d: HID service disconnected\n", slot);
+            // Reliable disconnect signal: free the slot even if the raw HCI
+            // disconnection complete did not match (e.g. con_handle mismatch),
+            // otherwise the slot stays SLOT_READY and no reconnect is possible.
+            if (slots[slot].state != SLOT_IDLE) {
+                slots[slot].state = SLOT_IDLE;
+                slots[slot].con_handle = HCI_CON_HANDLE_INVALID;
+                slots[slot].hids_cid = 0;
+                if (connecting_slot == slot) {
+                    connecting_slot = -1;
+                }
+                coordinator_on_disconnect(slot);
+            }
             break;
 
         case GATTSERVICE_SUBEVENT_HID_REPORT:
@@ -783,7 +836,18 @@ static int find_bonded_entry(const bd_addr_t addr)
 
 static void add_bonded_entry(const bd_addr_t addr, bd_addr_type_t addr_type)
 {
-    if (bonded_list.count >= MAX_HID_DEVICES) return;
+    // The device mints a new random address each time it is (re-)paired, so the
+    // list fills with stale addresses from earlier pairings of the same device.
+    // When it is full, evict the oldest entry (FIFO) so the device we just paired
+    // always fits and is remembered for auto-reconnect.
+    if (bonded_list.count >= MAX_HID_DEVICES) {
+        BLE_LOG("Bonded list full; evicting oldest %s\n",
+                bd_addr_to_str(bonded_list.entries[0].addr));
+        for (uint8_t i = 0; i + 1 < bonded_list.count; i++) {
+            bonded_list.entries[i] = bonded_list.entries[i + 1];
+        }
+        bonded_list.count--;
+    }
     memcpy(bonded_list.entries[bonded_list.count].addr, addr, 6);
     bonded_list.entries[bonded_list.count].addr_type = (bd_addr_type_t)(addr_type & 1);
     bonded_list.count++;
@@ -953,3 +1017,19 @@ static void led_timer_handler(btstack_timer_source_t * ts)
     btstack_run_loop_set_timer(ts, LED_BLINKING_INTERVAL_MS);
     btstack_run_loop_add_timer(ts);
 }
+
+#if HOG_HOST_DEBUG
+// Periodic diagnostic: proves Core 1 is alive and the CDC/log-replay path works,
+// and shows the coordinator + per-slot state so we can see whether a dropped
+// device's slot is ever freed (SLOT_READY stuck = link loss not detected).
+static void heartbeat_handler(btstack_timer_source_t * ts)
+{
+    BLE_LOG("HB coord=%d | s0:%d ch=0x%04x | s1:%d ch=0x%04x\n",
+            (int)coord_state,
+            (int)slots[0].state, slots[0].con_handle,
+            (int)slots[1].state, slots[1].con_handle);
+
+    btstack_run_loop_set_timer(ts, HEARTBEAT_INTERVAL_MS);
+    btstack_run_loop_add_timer(ts);
+}
+#endif

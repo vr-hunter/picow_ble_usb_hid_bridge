@@ -10,18 +10,15 @@
 
 ## Reading the logs
 
-Logs go to UART0 — GPIO 0 (TX, physical pin 1) and GPIO 1 (RX, pin 2) — so you
-need a USB-to-serial adapter, with its ground tied to a ground pin on the board.
-The firmware only prints, so wiring the adapter's RX to GPIO 0 and the grounds
-together is enough.
-(Leaving the adapter's TX disconnected also avoids driving 5 V into a
-3.3 V input.)
+Logs go to the USB CDC-ACM serial port, so no adapter or extra wiring is needed
+beyond the USB cable. On Linux it appears as a `/dev/ttyACM*` device, on
+Windows/macOS as a serial COM port; open it with any terminal program (for
+example `minicom`, `screen`, or PuTTY). Set the baud rate to 115200 — it is
+ignored for a USB serial port, but most terminal programs require a value.
 
 Both cores share the console, so each line is tagged with the subsystem that
-wrote it: `[SYS]`, `[BLE]` or `[USB]`. Some receivers cannot keep up with the
-default 115200 — a bit-banged software UART on an AVR, for instance, is
-unreliable much above 38400.
-So, build with a matching [`UART_BAUD_RATE`, say 9600](build.md).
+wrote it: `[SYS]`, `[BLE]` or `[USB]`. The first lines, printed before the host
+opens the port, are dropped until the terminal is attached.
 
 ## A keyboard pairs, then nothing happens
 

@@ -29,10 +29,6 @@ set(PICO_BOARD pico2_w CACHE STRING "Board type")
 option(ENABLE_USB_LOGGING "Log USB device events and HID report traffic" OFF)
 option(ENABLE_HEARTBEAT_LOGS "Log a periodic Core 0 heartbeat" OFF)
 
-# Baud rate of the log UART. Lower it for a receiver that cannot keep up, such
-# as a bit-banged software UART on an AVR.
-set(UART_BAUD_RATE 115200 CACHE STRING "Baud rate of the log UART")
-
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
@@ -71,10 +67,9 @@ target_link_libraries(picow_ble_usb_hid_bridge
 target_include_directories(picow_ble_usb_hid_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     )
-target_compile_definitions(picow_ble_usb_hid_bridge PRIVATE 
+target_compile_definitions(picow_ble_usb_hid_bridge PRIVATE
     CYW43_LWIP=0
-    PICO_DEFAULT_UART_BAUD_RATE=${UART_BAUD_RATE}
-    )    
+    )
     
 if(ENABLE_USB_LOGGING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_USB_LOGGING=1)
@@ -91,9 +86,9 @@ pico_btstack_make_gatt_header(picow_ble_usb_hid_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/hog_host_demo.gatt
     )
 
-# disable usb output, enable uart output
-pico_enable_stdio_usb(picow_ble_usb_hid_bridge 0)
-pico_enable_stdio_uart(picow_ble_usb_hid_bridge 1)
+# Route the log console over a USB CDC-ACM serial port instead of UART.
+pico_enable_stdio_usb(picow_ble_usb_hid_bridge 1)
+pico_enable_stdio_uart(picow_ble_usb_hid_bridge 0)
 
 # create map/bin/hex/uf2 file etc.
 pico_add_extra_outputs(picow_ble_usb_hid_bridge)

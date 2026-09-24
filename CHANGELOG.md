@@ -1,5 +1,12 @@
 # Changelog
 
+## 20260924
+
+- Log console moved from UART0 (GPIO 0/1) to the USB CDC-ACM serial port.
+  `pico_enable_stdio_usb` is now enabled, UART stdio is disabled, and the
+  `UART_BAUD_RATE` build option was removed. Open the new serial port (for
+  example `/dev/ttyACM*`) to read the logs.
+
 ## 20260830
 
 - Support for Devices with Privacy Addresses (RPA)

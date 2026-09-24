@@ -94,8 +94,11 @@
 
 //------------- CLASS -------------//
 // One HID interface per bridged device; all are exposed as a composite device.
+// CDC provides the log console over a USB serial (CDC-ACM) port.
 #define CFG_TUD_HID               MAX_HID_DEVICES
-#define CFG_TUD_CDC               0
+#define CFG_TUD_CDC               1
+#define CFG_TUD_CDC_RX_BUFSIZE    64
+#define CFG_TUD_CDC_TX_BUFSIZE    64
 #define CFG_TUD_MSC               0
 #define CFG_TUD_MIDI              0
 #define CFG_TUD_VENDOR            0
