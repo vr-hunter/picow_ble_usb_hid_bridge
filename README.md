@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> This is a fork of [https://github.com/shiomachisoft/picow_ble_usb_hid_bridge]() that adds multi-device connections. It is not maintained beyond the that.
+> This is a fork of [shiomachisoft/picow_ble_usb_hid_bridge](https://github.com/shiomachisoft/picow_ble_usb_hid_bridge) that adds multi-device connections. It is not maintained beyond the that.
 
 # Pico W / Pico 2 W - BLE to USB HID Bridge
 
