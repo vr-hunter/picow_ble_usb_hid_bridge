@@ -28,4 +28,3 @@ These versions are known to work:
 |----|----|----|
 | `ENABLE_USB_LOGGING` | `OFF` | Log USB device events and every forwarded HID report. |
 | `ENABLE_HEARTBEAT_LOGS` | `OFF` | Log a heartbeat line every 5 seconds to show Core 0 is alive. |
-| `UART_BAUD_RATE` | `115200` | Baud rate of the log UART. |

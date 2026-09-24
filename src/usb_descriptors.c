@@ -92,10 +92,17 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 // Configuration Descriptor (dynamic: one HID interface per READY device)
 //--------------------------------------------------------------------+
 
-// Max size: config header + N * (interface + hid + endpoint)
-#define CONFIG_BUF_SIZE (TUD_CONFIG_DESC_LEN + MAX_HID_DEVICES * (TUD_HID_DESC_LEN))
+// Max size: config header + CDC block + N * (interface + hid + endpoint)
+#define CONFIG_BUF_SIZE (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + MAX_HID_DEVICES * (TUD_HID_DESC_LEN))
 
 static uint8_t desc_configuration[CONFIG_BUF_SIZE] __attribute__((aligned(4)));
+
+// CDC-ACM log console at interface 0 (IAD + comm/data interfaces + 3 endpoints).
+// Notification EP 0x81, data OUT 0x02, data IN 0x82. HID endpoints therefore
+// start at 0x83 (see below) to avoid colliding with these.
+static const uint8_t desc_cdc_block[TUD_CDC_DESC_LEN] = {
+    TUD_CDC_DESCRIPTOR(0, 0, 0x81, 8, 0x02, 0x82, 64)
+};
 
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
@@ -116,12 +123,16 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
     tusb_desc_configuration_t *config_desc = (tusb_desc_configuration_t *) p_desc;
     config_desc->bLength = sizeof(tusb_desc_configuration_t);
     config_desc->bDescriptorType = TUSB_DESC_CONFIGURATION;
-    config_desc->bNumInterfaces = num_ifs;
+    config_desc->bNumInterfaces = 2 + num_ifs; // 2 for the CDC log console
     config_desc->bConfigurationValue = 1;
     config_desc->iConfiguration = 0;
     config_desc->bmAttributes = TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP;
     config_desc->bMaxPower = 250;
     p_desc += sizeof(tusb_desc_configuration_t);
+
+    // CDC log console comes first, occupying interfaces 0 and 1.
+    memcpy(p_desc, desc_cdc_block, TUD_CDC_DESC_LEN);
+    p_desc += TUD_CDC_DESC_LEN;
 
     for (uint8_t i = 0; i < num_ifs; i++) {
         uint16_t report_desc_len = 0;
@@ -138,7 +149,7 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
         tusb_desc_interface_t *if_desc = (tusb_desc_interface_t *) p_desc;
         if_desc->bLength = sizeof(tusb_desc_interface_t);
         if_desc->bDescriptorType = TUSB_DESC_INTERFACE;
-        if_desc->bInterfaceNumber = i;
+        if_desc->bInterfaceNumber = 2 + i; // HID interfaces follow the CDC console
         if_desc->bAlternateSetting = 0;
         if_desc->bNumEndpoints = 1;
         if_desc->bInterfaceClass = TUSB_CLASS_HID;
@@ -160,7 +171,7 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
         tusb_desc_endpoint_t *ep_desc = (tusb_desc_endpoint_t *) p_desc;
         ep_desc->bLength = sizeof(tusb_desc_endpoint_t);
         ep_desc->bDescriptorType = TUSB_DESC_ENDPOINT;
-        ep_desc->bEndpointAddress = 0x80 + 1 + i;
+        ep_desc->bEndpointAddress = 0x80 + 3 + i; // 0x81/0x82 are the CDC console's
         ep_desc->bmAttributes.xfer = TUSB_XFER_INTERRUPT;
         ep_desc->wMaxPacketSize = CFG_TUD_HID_EP_BUFSIZE;
         ep_desc->bInterval = 1;
