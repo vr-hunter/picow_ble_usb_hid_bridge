@@ -35,11 +35,15 @@
 #define MAX_NR_AVRCP_CONNECTIONS 2
 #define MAX_NR_BNEP_CHANNELS 1
 #define MAX_NR_BNEP_SERVICES 1
+// The bridge forwards up to MAX_HID_DEVICES (see hid_bridge.h, default 2) BLE HID
+// devices at once. Every per-connection pool below must therefore hold at least
+// MAX_HID_DEVICES entries; a little headroom is added where two devices can act
+// concurrently (e.g. both discovering GATT at the same time).
 #define MAX_NR_BTSTACK_LINK_KEY_DB_MEMORY_ENTRIES  2
-#define MAX_NR_GATT_CLIENTS 1
+#define MAX_NR_GATT_CLIENTS 4
 #define MAX_NR_HCI_CONNECTIONS 2
-#define MAX_NR_HID_HOST_CONNECTIONS 1
-#define MAX_NR_HIDS_CLIENTS 1
+#define MAX_NR_HID_HOST_CONNECTIONS 2
+#define MAX_NR_HIDS_HOSTS 2
 #define MAX_NR_HFP_CONNECTIONS 1
 #define MAX_NR_L2CAP_CHANNELS  4
 #define MAX_NR_L2CAP_SERVICES  3
@@ -47,7 +51,7 @@
 #define MAX_NR_RFCOMM_MULTIPLEXERS 1
 #define MAX_NR_RFCOMM_SERVICES 1
 #define MAX_NR_SERVICE_RECORD_ITEMS 4
-#define MAX_NR_SM_LOOKUP_ENTRIES 3
+#define MAX_NR_SM_LOOKUP_ENTRIES 4
 #define MAX_NR_WHITELIST_ENTRIES 16
 #define MAX_NR_LE_DEVICE_DB_ENTRIES 16
 

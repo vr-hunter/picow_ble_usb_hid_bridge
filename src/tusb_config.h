@@ -26,6 +26,8 @@
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
 
+#include "hid_bridge.h"
+
 #ifdef __cplusplus
  extern "C" {
 #endif
@@ -91,7 +93,8 @@
 #endif
 
 //------------- CLASS -------------//
-#define CFG_TUD_HID               1
+// One HID interface per bridged device; all are exposed as a composite device.
+#define CFG_TUD_HID               MAX_HID_DEVICES
 #define CFG_TUD_CDC               0
 #define CFG_TUD_MSC               0
 #define CFG_TUD_MIDI              0

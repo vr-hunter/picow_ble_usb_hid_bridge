@@ -43,7 +43,7 @@ volatile bool g_usb_reinit_request = false; // Flag to request USB re-initializa
 //--------------------------------------------------------------------+
 void usb_dev_main(void);
 void hid_task(void);
-bool send_hid_report(void);
+bool send_hid_report(uint8_t position, ULONG physical_slot);
 
 extern void ble_host_main(void);
 
@@ -107,11 +107,11 @@ void usb_dev_main(void)
             USB_LOG("Re-initialization requested by the BLE host\n");
             if (usb_reinit_state == USB_REINIT_IDLE) {
                 if (tud_mounted()) {
-                    tud_disconnect(); // Disconnect the USB device
+                    tud_disconnect();
                     usb_reinit_start_ms = board_millis();
                     usb_reinit_state = USB_REINIT_WAIT_STABILIZATION;
                 } else {
-                    CMN_ClearQueue(CMN_QUE_KIND_HID_RPT);
+                    CMN_ClearAllQueues();
                     tud_connect();
                 }
             }
@@ -120,8 +120,7 @@ void usb_dev_main(void)
         if (usb_reinit_state == USB_REINIT_WAIT_STABILIZATION) {
             if (board_millis() - usb_reinit_start_ms >= USB_REINIT_STABILIZATION_DELAY) {
                 usb_reinit_state = USB_REINIT_IDLE;
-                // Clear any pending HID reports from the queue before reconnecting.
-                CMN_ClearQueue(CMN_QUE_KIND_HID_RPT);
+                CMN_ClearAllQueues();
                 tud_connect();
             }
         }
@@ -168,35 +167,37 @@ void tud_resume_cb(void)
 
 // Dequeue and send one HID report from the queue to the USB host.
 // return true if a report was successfully sent, false otherwise.
-bool send_hid_report(void)
+// Dequeue and send one HID report from the queue to the USB host.
+// 'position' is the compact USB interface index (0..count-1); 'physical_slot'
+// is the BLE slot whose report queue feeds it. The two differ after a
+// lower-numbered device disconnects and the remaining ones renumber.
+bool send_hid_report(uint8_t position, ULONG physical_slot)
 {
-    static ST_HID_RPT stHidRpt; // Change local variable to static to use static memory (data area) instead of stack, preventing stack overflow.
+    static ST_HID_RPT stHidRpt;
     bool bRet = false;
 
-    // Peek at the next report in the queue without removing it yet
-    if (CMN_PeekQueue(CMN_QUE_KIND_HID_RPT, &stHidRpt)) {
-        // If the host is suspended, wake it up and exit.
-        // The report will be sent on a subsequent call after the host resumes.
+    if (CMN_PeekQueue(physical_slot, &stHidRpt)) {
         if ( tud_suspended()) {
             tud_remote_wakeup();
             return bRet;
-        }                 
-        // If the HID interface is ready, try to send the report
-        if (tud_hid_ready()) {
-            // Try to send the report.
-            // The report ID, if the device uses any, is already the first byte of
-            // stHidRpt.report. Passing 0 here tells TinyUSB to send the buffer
-            // verbatim; passing a non-zero ID would prepend a second one and shift
-            // every following byte.
-            if (tud_hid_report(0, stHidRpt.report, stHidRpt.report_len)) {
-                USB_LOG("HID report sent (%u bytes)\n", stHidRpt.report_len);
-                // If sent successfully, remove the report from the queue
-                CMN_AdvanceQueue(CMN_QUE_KIND_HID_RPT);
+        }
+        if (tud_hid_n_ready(position)) {
+            if (tud_hid_n_report(position, 0, stHidRpt.report, stHidRpt.report_len)) {
+                USB_LOG("HID report sent pos %u <- slot %lu (%u bytes)\n",
+                        position, (unsigned long)physical_slot, stHidRpt.report_len);
+                CMN_AdvanceQueue(physical_slot);
                 bRet = true;
-            }  
+            }
+        } else {
+            static uint32_t not_ready_count[MAX_HID_DEVICES];
+            not_ready_count[position]++;
+            if (not_ready_count[position] <= 3 || (not_ready_count[position] % 200) == 0) {
+                USB_LOG("Pos %u: HID not ready (%lu checks)\n",
+                        position, (unsigned long)not_ready_count[position]);
+            }
         }
     }
- 
+
     return bRet;
 }
 
@@ -205,8 +206,11 @@ bool send_hid_report(void)
 //--------------------------------------------------------------------+
 void hid_task(void)
 {
-    // Dequeue and send one HID report.
-    (void)send_hid_report();
+    usb_ready_snapshot_t snap;
+    if (!hid_bridge_get_ready_snapshot(&snap)) return;
+    for (uint8_t pos = 0; pos < snap.count; pos++) {
+        send_hid_report(pos, (ULONG)snap.slot[pos]);
+    }
 }
 
 // Invoked when sent REPORT successfully to host
