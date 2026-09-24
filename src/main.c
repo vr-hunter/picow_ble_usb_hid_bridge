@@ -107,6 +107,7 @@ void usb_dev_main(void)
             USB_LOG("Re-initialization requested by the BLE host\n");
             if (usb_reinit_state == USB_REINIT_IDLE) {
                 if (tud_mounted()) {
+                    LOG_CdcOutReset(); // discard partial stage; lost on re-enumeration
                     tud_disconnect();
                     usb_reinit_start_ms = board_millis();
                     usb_reinit_state = USB_REINIT_WAIT_STABILIZATION;
@@ -127,6 +128,18 @@ void usb_dev_main(void)
 
         tud_task();          // Run TinyUSB device task
         hid_task();          // Run HID report sending task
+
+        // Stream the staged CDC log bytes (resumable across a port drop), then
+        // pop the next buffered BLE message into the staging buffer if idle. This
+        // replaces the old printf path, which dropped a message's trailing bytes
+        // (e.g. the newline) when a re-enumeration raced the write.
+        LOG_CdcOutFlush();
+        if (!LOG_CdcOutPending()) {
+            char logbuf[LOG_RING_MSG_LEN];
+            if (LOG_RingPop(logbuf, sizeof(logbuf))) {
+                LOG_CdcOutLoad(logbuf);
+            }
+        }
     }
 }
 

@@ -17,13 +17,29 @@
 // subsystem that emitted it. USB tracing is chatty and only useful when
 // debugging enumeration, so it is compiled out unless CMake enables it.
 #define SYS_LOG(...) printf("[SYS] " __VA_ARGS__)
-#define BLE_LOG(...) printf("[BLE] " __VA_ARGS__)
+#define BLE_LOG(...) LOG_RingPush("[BLE] " __VA_ARGS__)
 
 #ifdef ENABLE_USB_LOGGING
 #define USB_LOG(...) printf("[USB] " __VA_ARGS__)
 #else
 #define USB_LOG(...) ((void)0)
 #endif
+
+// [BLE log replay ring + CDC out staging]
+// BLE_LOG (Core 1) pushes into the ring instead of printf'ing, because the USB
+// CDC port drops output while Core 0 re-enumerates. Core 0 stages each message
+// byte-by-byte into the CDC endpoint and only advances once the bytes are
+// accepted, so a port drop pauses (not truncates) the transfer. SLOTS is the
+// number of messages retained across a gap; CDC_OUT_LEN is the staged bytes.
+#define LOG_RING_SLOTS 32
+#define LOG_RING_MSG_LEN 128
+#define LOG_CDC_OUT_LEN 512
+void LOG_RingPush(const char *fmt, ...);
+bool LOG_RingPop(char *out, uint32_t maxlen);
+void LOG_CdcOutReset(void);
+void LOG_CdcOutLoad(const char *msg);
+void LOG_CdcOutFlush(void);
+bool LOG_CdcOutPending(void);
 
 // [Definitions]
 #include "hid_bridge.h"
