@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> This is a fork of [shiomachisoft/picow_ble_usb_hid_bridge](https://github.com/shiomachisoft/picow_ble_usb_hid_bridge) that adds multi-device connections. It is not maintained beyond the that.
+> This is a fork of [shiomachisoft/picow_ble_usb_hid_bridge](https://github.com/shiomachisoft/picow_ble_usb_hid_bridge) that adds multi-device connections. I modified the project to get my own keyboard *and* mouse working with one dongle. It is not maintained beyond the that functionality.
 
 # Pico W / Pico 2 W - BLE to USB HID Bridge
 
