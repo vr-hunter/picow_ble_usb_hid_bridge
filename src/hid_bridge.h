@@ -18,6 +18,15 @@
 #define MAX_HID_DEVICES 2
 #endif
 
+// Maximum number of previously-paired device addresses kept for auto-reconnect.
+// Independent of MAX_HID_DEVICES: the list only stores addresses (no USB
+// interface or report queue is allocated per entry), so it can be larger than
+// the number of devices that can be bridged at once. The device mints a new
+// random address per pairing, so a few stale entries are expected.
+#ifndef MAX_KNOWN_DEVICES
+#define MAX_KNOWN_DEVICES 8
+#endif
+
 // A READY device has completed GATT discovery, so its HID report descriptor is
 // known and stable. The USB interface for that device is backed by hids_cid.
 typedef struct {

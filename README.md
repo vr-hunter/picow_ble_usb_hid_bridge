@@ -38,9 +38,11 @@ The full source code for this program and the ready-to-flash binary (.uf2 file) 
 3.  The LED goes solid once the device is connected, and the PC sees a USB input
     device.
 
-After the first pairing, the Pico persistently stores which device it needs to
-reconnect to, at the next power-on. Some peripherals sleep deeply, and do not
-reconnect unprompted — press a key or two to wake them up and reconnect.
+After the first pairing, the Pico persistently stores which devices it needs to
+reconnect to, at the next power-on. It remembers up to eight previously-paired
+devices, though only two can be bridged to the PC at the same time. Some
+peripherals sleep deeply, and do not reconnect unprompted — press a key or two
+to wake them up and reconnect.
 
 ## How it works
 
