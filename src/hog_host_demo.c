@@ -56,7 +56,26 @@
 #define CONNECTION_TIMEOUT_MS 3000
 #define SCAN_TIMEOUT_MS       5000
 #define RECONNECT_DELAY_MS    300
-#define LED_BLINKING_INTERVAL_MS 200
+
+// Pairing mode: a window during which the bridge discovers NEW (unbonded) HID
+// devices. Bonded devices always auto-reconnect, independent of this window.
+#define PAIRING_MODE_DURATION_MS 10000
+
+// User button, wired GP28 <-> GND (active-low, internal pull-up). GPIO0 (BOOTSEL)
+// cannot be used here: it is the QSPI flash CS, driven by the XIP controller, so
+// gpio_get(0) would read the flash-CS line instead of the button.
+#define BUTTON_PIN 28
+#define BUTTON_POLL_INTERVAL_MS 30
+#define BUTTON_DEBOUNCE_MS 40
+
+// LED: pairing mode -> rapid LED_PAIRING_BLINK_MS blink; normal mode ->
+// 0 devices = solid ON, n>=1 = off LED_GAP_MS then {on LED_ON_MS, off
+// LED_OFF_MS} x n, repeated.
+#define LED_TICK_MS 50
+#define LED_PAIRING_BLINK_MS 200
+#define LED_GAP_MS 2000
+#define LED_ON_MS 500
+#define LED_OFF_MS 500
 
 #define CONN_INTERVAL_MIN_UNITS 10
 #define CONN_INTERVAL_MAX_UNITS 12
@@ -130,6 +149,19 @@ static btstack_timer_source_t heartbeat_timer;
 #define HEARTBEAT_INTERVAL_MS 5000
 #endif
 
+static btstack_timer_source_t button_timer;
+
+// Pairing mode window. Non-zero end timestamp = window active.
+static uint32_t pairing_mode_end_ms = 0;
+
+// Button debounce state (polled on Core 1).
+static bool button_raw_prev = false;
+static bool button_stable = false;
+static uint32_t button_raw_since_change_ms = 0;
+
+// LED pattern phase anchor (normal-mode count pattern).
+static uint32_t led_cycle_start_ms = 0;
+
 static btstack_packet_callback_registration_t hci_event_callback_registration;
 static btstack_packet_callback_registration_t sm_event_callback_registration;
 
@@ -150,6 +182,10 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
 static void handle_gatt_client_event(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
 static void coordinator_start_scan(void);
+static void coordinator_maybe_start_scan(void);
+static void pairing_mode_enter(void);
+static void pairing_mode_exit(void);
+static bool pairing_mode_active(void);
 static void coordinator_on_connect_success(int slot);
 static void coordinator_on_connect_fail(int slot);
 static void coordinator_on_disconnect(int slot);
@@ -190,6 +226,7 @@ static void hid_handle_input_report(uint16_t cid, uint8_t service_index, uint8_t
 const uint8_t *hid_bridge_get_report_descriptor(uint8_t position, uint16_t *len);
 
 static void led_timer_handler(btstack_timer_source_t * ts);
+static void button_timer_handler(btstack_timer_source_t * ts);
 
 //--------------------------------------------------------------------+
 // PUBLIC APIs & ENTRY POINTS
@@ -237,8 +274,10 @@ int btstack_main(int argc, const char * argv[])
     bonded_list.count = 0;
     has_bonded_device = false;
 
+    led_cycle_start_ms = btstack_run_loop_get_time_ms();
+
     btstack_run_loop_set_timer_handler(&led_timer, &led_timer_handler);
-    btstack_run_loop_set_timer(&led_timer, LED_BLINKING_INTERVAL_MS);
+    btstack_run_loop_set_timer(&led_timer, LED_TICK_MS);
     btstack_run_loop_add_timer(&led_timer);
 
 #if HOG_HOST_DEBUG
@@ -246,6 +285,16 @@ int btstack_main(int argc, const char * argv[])
     btstack_run_loop_set_timer(&heartbeat_timer, HEARTBEAT_INTERVAL_MS);
     btstack_run_loop_add_timer(&heartbeat_timer);
 #endif
+
+    // User button: input with pull-up (active-low). Must be set up before the
+    // first button_timer poll.
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
+
+    btstack_run_loop_set_timer_handler(&button_timer, &button_timer_handler);
+    btstack_run_loop_set_timer(&button_timer, BUTTON_POLL_INTERVAL_MS);
+    btstack_run_loop_add_timer(&button_timer);
 
     hci_power_control(HCI_POWER_ON);
     return 0;
@@ -322,7 +371,12 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         break;
                     }
 
-                    if (has_hid_service) {
+                    // New (unbonded) HID devices are only accepted while the
+                    // pairing window is open. Known devices reconnect via the two
+                    // bond branches above (address match / RPA resolution), so this
+                    // fallback must NOT fire on `has_bonded_device` alone -- that
+                    // flag is global and would accept any stranger.
+                    if (has_hid_service && pairing_mode_active()) {
                         int slot = find_first_idle_slot();
                         if (slot < 0) break;
                         BLE_LOG("Found HID device %s (type %u, slot %d), connecting...\n",
@@ -451,7 +505,7 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
             bd_addr_type_t rpa_addr_type = (bd_addr_type_t)(sm_event_identity_resolving_failed_get_addr_type(packet) & 1);
             bool adv_had_hid = get_and_clear_pending_rpa_has_hid_service(rpa_addr);
 
-            if (adv_had_hid && coord_state == COORD_SCANNING) {
+            if (adv_had_hid && pairing_mode_active() && coord_state == COORD_SCANNING) {
                 int s = find_first_idle_slot();
                 if (s >= 0) {
                     BLE_LOG("SM: Unresolved RPA %s has HID service, connecting as new device (slot %d)...\n",
@@ -671,11 +725,7 @@ static void coordinator_on_connect_success(int slot)
     (void)slot;
     coordinator_publish_snapshot();
 
-    if (any_slot_idle()) {
-        coordinator_start_scan();
-    } else {
-        coord_state = COORD_ALL_READY;
-    }
+    coordinator_maybe_start_scan();
 }
 
 static void coordinator_on_connect_fail(int slot)
@@ -688,11 +738,7 @@ static void coordinator_on_connect_fail(int slot)
     }
     coordinator_publish_snapshot();
 
-    if (any_slot_idle()) {
-        coordinator_start_scan();
-    } else {
-        coord_state = COORD_ALL_READY;
-    }
+    coordinator_maybe_start_scan();
 }
 
 static void coordinator_on_disconnect(int slot)
@@ -700,16 +746,49 @@ static void coordinator_on_disconnect(int slot)
     (void)slot;
     coordinator_publish_snapshot();
 
-    if (any_slot_idle()) {
-        coordinator_start_scan();
-    } else {
-        coord_state = COORD_ALL_READY;
-    }
+    coordinator_maybe_start_scan();
 }
 
 static void coordinator_start_scan(void)
 {
     hog_start_scan();
+}
+
+static bool pairing_mode_active(void)
+{
+    return pairing_mode_end_ms != 0
+        && btstack_run_loop_get_time_ms() < pairing_mode_end_ms;
+}
+
+static void pairing_mode_enter(void)
+{
+    pairing_mode_end_ms = btstack_run_loop_get_time_ms() + PAIRING_MODE_DURATION_MS;
+    BLE_LOG("Pairing mode: %dms window started\n", PAIRING_MODE_DURATION_MS);
+    // Don't disturb a connection in progress; the post-connect handler re-evaluates.
+    if (coord_state != COORD_CONNECTING) coordinator_maybe_start_scan();
+}
+
+static void pairing_mode_exit(void)
+{
+    pairing_mode_end_ms = 0;
+    BLE_LOG("Pairing mode ended\n");
+    if (coord_state != COORD_CONNECTING) coordinator_maybe_start_scan();
+}
+
+// Decide whether to (re)start scanning right now. Scanning is needed to (a)
+// reconnect bonded devices (always) and (b) discover new devices (pairing only).
+// With neither, stay idle and stop any active scan to save RF/power. Called from
+// the coordinator handlers (which own the connect lifecycle) and from the pairing
+// enter/exit paths (already guarded against an in-flight connection).
+static void coordinator_maybe_start_scan(void)
+{
+    if (!any_slot_idle()) { coord_state = COORD_ALL_READY; return; }
+    if (pairing_mode_active() || has_bonded_device) {
+        coordinator_start_scan();
+    } else {
+        gap_stop_scan();
+        coord_state = COORD_ALL_READY;
+    }
 }
 
 //--------------------------------------------------------------------+
@@ -719,7 +798,11 @@ static void coordinator_start_scan(void)
 static void hog_start_connect(void)
 {
     load_bonded_list();
-    coordinator_start_scan();
+    // Enter pairing mode on boot so the bridge immediately scans for both bonded
+    // (auto-reconnect) and new (pair) HID devices, then re-evaluates when the
+    // window expires.
+    pairing_mode_enter();
+    coordinator_maybe_start_scan();
 }
 
 static void hog_connect(int slot)
@@ -753,6 +836,12 @@ static void hog_scan_timeout(btstack_timer_source_t * ts)
 {
     UNUSED(ts);
     if (coord_state != COORD_SCANNING) return;
+    if (!pairing_mode_active() && !has_bonded_device) {
+        // Nothing left to find (pairing ended, no bonded devices): stop scanning.
+        gap_stop_scan();
+        coord_state = COORD_ALL_READY;
+        return;
+    }
     BLE_LOG("Scan timeout. Refreshing scan...\n");
     hog_start_scan();
 }
@@ -769,7 +858,7 @@ static void hog_connection_timeout(btstack_timer_source_t * ts)
 static void hog_reconnect_timeout(btstack_timer_source_t * ts)
 {
     UNUSED(ts);
-    coordinator_start_scan();
+    coordinator_maybe_start_scan();
 }
 
 static void handle_outgoing_connection_error(int slot)
@@ -999,22 +1088,68 @@ const uint8_t *hid_bridge_get_report_descriptor(uint8_t position, uint16_t *len)
 
 static void led_timer_handler(btstack_timer_source_t * ts)
 {
-    static bool led_state = false;
+    uint32_t now = btstack_run_loop_get_time_ms();
+
+    // Detect pairing-window expiry so the scan policy can re-evaluate promptly.
+    static bool pairing_was_active = false;
+    bool pairing_active = pairing_mode_active();
+    if (pairing_was_active && !pairing_active) {
+        pairing_mode_exit();
+    }
+    pairing_was_active = pairing_active;
 
     usb_ready_snapshot_t snap;
     CMN_GetReadySnapshot(&snap);
+    uint8_t n = snap.count;
 
-    if (snap.count > 0) {
-        if (!led_state) {
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, true);
-            led_state = true;
-        }
+    bool on;
+    if (pairing_active) {
+        // Rapid blink while the pairing window is open.
+        on = ((now / LED_PAIRING_BLINK_MS) % 2) == 0;
+    } else if (n == 0) {
+        // Solid ON = powered, idle, no devices connected.
+        on = true;
     } else {
-        led_state = !led_state;
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state);
+        // Count pattern: off LED_GAP_MS, then {on LED_ON_MS, off LED_OFF_MS} x n, repeat.
+        uint32_t period = LED_GAP_MS + (uint32_t)n * (LED_ON_MS + LED_OFF_MS);
+        uint32_t t = (now - led_cycle_start_ms) % period;
+        if (t < LED_GAP_MS) {
+            on = false;
+        } else {
+            on = ((t - LED_GAP_MS) % (LED_ON_MS + LED_OFF_MS)) < LED_ON_MS;
+        }
     }
 
-    btstack_run_loop_set_timer(ts, LED_BLINKING_INTERVAL_MS);
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, on);
+    btstack_run_loop_set_timer(ts, LED_TICK_MS);
+    btstack_run_loop_add_timer(ts);
+}
+
+//--------------------------------------------------------------------+
+// USER BUTTON TIMER HANDLER (Core 1)
+// Polls BUTTON_PIN (active-low, internal pull-up) and debounces to reject
+// contact bounce. A confirmed press edge opens the pairing window.
+//--------------------------------------------------------------------+
+
+static void button_timer_handler(btstack_timer_source_t * ts)
+{
+    uint32_t now = btstack_run_loop_get_time_ms();
+    bool raw = !gpio_get(BUTTON_PIN);   // active-low: true = pressed
+
+    if (raw != button_raw_prev) {
+        button_raw_prev = raw;
+        button_raw_since_change_ms = now;   // restart the debounce window
+    }
+
+    if ((now - button_raw_since_change_ms) >= BUTTON_DEBOUNCE_MS
+        && button_raw_prev != button_stable) {
+        button_stable = button_raw_prev;
+        if (button_stable) {
+            pairing_mode_enter();
+        }
+    }
+
+    btstack_run_loop_set_timer(ts, BUTTON_POLL_INTERVAL_MS);
     btstack_run_loop_add_timer(ts);
 }
 

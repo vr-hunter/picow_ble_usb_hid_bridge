@@ -32,17 +32,37 @@ The full source code for this program and the ready-to-flash binary (.uf2 file) 
 
 ## Usage
 
-1.  Plug the board into a USB port. The LED blinks while nothing is connected
-    over BLE.
+1.  Plug the board into a USB port. For the first 10 seconds the LED blinks
+    rapidly — the pairing window is open (see below).
 2.  Put the keyboard or mouse into pairing mode; its manual will say how.
-3.  The LED goes solid once the device is connected, and the PC sees a USB input
-    device.
+3.  The PC sees a USB input device once the device connects.
+
+### Pairing mode
+
+New devices are only accepted while the pairing window is open.
+
+- **With a button installed** (GPIO 28 to GND, active-low): press it any time to
+  open a 10-second pairing window.
+- **Without a button**: the pairing window opens automatically for the first 10
+  seconds after every power-on. Power-cycle the board to pair a new device.
+
+While the window is open the LED blinks rapidly; put your device into pairing
+mode and it will be picked up automatically.
+
+### LED
+
+- **Rapid blink** — the pairing window is open.
+- **Solid on** — powered, no devices connected.
+- **Blinks *n* times per cycle** — *n* devices connected.
+
+### Reconnection
 
 After the first pairing, the Pico persistently stores which devices it needs to
-reconnect to, at the next power-on. It remembers up to eight previously-paired
-devices, though only two can be bridged to the PC at the same time. Some
-peripherals sleep deeply, and do not reconnect unprompted — press a key or two
-to wake them up and reconnect.
+reconnect to at the next power-on. It remembers up to eight previously-paired
+devices, though only two can be bridged to the PC at the same time. Known
+devices reconnect automatically without re-pairing. Some peripherals sleep
+deeply, and do not reconnect unprompted — press a key or two to wake them up and
+reconnect.
 
 ## How it works
 
@@ -56,7 +76,8 @@ working. Input reports are forwarded byte for byte. The USB device re-enumerates
 once the BLE link is up, which is what makes the PC read the new descriptor.
 
 **Connection handling.** The bridge alternates between reconnecting to a bonded
-device and scanning for new ones. It supports Resolvable Private Addresses (RPA)
+device and scanning for new ones (the latter only while the pairing window is
+open). It supports Resolvable Private Addresses (RPA)
 via Identity Resolving Keys (IRK), enabling automatic reconnection even when
 peripherals periodically rotate their Bluetooth address for privacy. Once the link
 is encrypted it asks for a 12.5-15 ms connection interval, so a power-saving
