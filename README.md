@@ -24,7 +24,7 @@ It operates as a BLE Central (Host), forwarding input data from the connected BL
 
 The full source code for this program and the ready-to-flash binary (.uf2 file) are available in this repository:
 
-- **Pre-built binaries**: Available under [`bin/`](bin/)
+- **Pre-built binaries**: Available under releases
 - **Build from source**: See [docs/build.md](docs/build.md) for detailed build instructions using VS Code and the Pico SDK.
 
 > **Note:**  
