@@ -5,6 +5,8 @@
 | Sanwa Supply MA-SBB314 | Mouse | Pico W, Pico 2 W |
 | ELECOM TK-FBM119 | Keyboard | Pico W, Pico 2 W |
 | Bluetouch Keyboard and Mouse (Smartphone App) (*1) | Keyboard, Mouse | Pico W, Pico 2 W |
+| Logitech MX Master 3s| Mouse | Pico 2 W |
+| Logitech MX Keys s| Keyboard | Pico 2 W | 
 
 ---
 
