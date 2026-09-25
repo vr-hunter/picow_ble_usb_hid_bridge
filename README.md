@@ -3,9 +3,11 @@
 
 # Pico W / Pico 2 W - BLE to USB HID Bridge
 
-This firmware for the Raspberry Pi Pico W / Pico 2 W allows you to use multiple BLE HID devices, such as a keyboard and mouse, as wired USB devices, even on PCs without Bluetooth.  
+This firmware for the Raspberry Pi Pico W / Pico 2 W allows you to use multiple[^1] BLE HID devices, such as a keyboard and mouse, as wired USB devices, even on PCs without Bluetooth.  
 It operates as a BLE Central (Host), forwarding input data from the connected BLE device to the host PC via USB, where it is recognized as a standard USB HID device.
-      
+
+[^1]: currently up to two. More should be possible (by setting `MAX_HID_DEVICES` to a larger value), but yet untested.
+
 **Key Benefits & Use Cases**  
 
 * **Works even before OS boot**  
