@@ -1,4 +1,3 @@
-// Copyright © 2026 Shiomachi Software. All rights reserved.
 // Cross-core contract between the BLE host (Core 1) and the USB device (Core 0).
 // The BLE side publishes a compact, spinlock-protected snapshot of which HID
 // interfaces are READY and which BTstack HIDS client id backs each one; the USB
@@ -9,7 +8,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "Type.h"
 
 // Maximum number of BLE HID devices bridged simultaneously. Each device is
 // exposed to the PC as its own USB HID interface. Raising this grows the slot
@@ -38,9 +36,13 @@ typedef struct {
 
 // Set by Core 1 whenever the READY set changes, so Core 0 re-enumerates the USB
 // device and the PC re-reads the (changed) configuration + report descriptors.
+// Core 0 clears it after handling the request.
 extern volatile bool g_usb_reinit_request;
 
-// --- Core 1 (BLE host) implements these; Core 0 (USB) calls them ------------
+// --- READY snapshot (shared storage, published by Core 1) -------------------
+// Publish the current READY set (called by Core 1 whenever it changes).
+void hid_bridge_publish_ready_snapshot(const usb_ready_snapshot_t *snap);
+
 // Copy the current READY snapshot out under the shared spinlock. Always returns
 // true (the snapshot is always valid).
 bool hid_bridge_get_ready_snapshot(usb_ready_snapshot_t *out);
@@ -50,8 +52,5 @@ bool hid_bridge_get_ready_snapshot(usb_ready_snapshot_t *out);
 // of range or the device is not READY. The returned pointer is valid for as long
 // as that device stays connected (the descriptor bytes live in shared RAM).
 const uint8_t *hid_bridge_get_report_descriptor(uint8_t position, uint16_t *len);
-
-// --- Core 0 (USB) calls these to publish a re-init request ------------------
-// (g_usb_reinit_request is written by Core 1 and cleared by Core 0.)
 
 #endif // HID_BRIDGE_H
