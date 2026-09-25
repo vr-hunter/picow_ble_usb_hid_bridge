@@ -43,14 +43,21 @@ add_compile_options(-Wall
         -Wno-maybe-uninitialized
         )
 
-# Add executable.  
+# Add executable.
 add_executable(picow_ble_usb_hid_bridge
     main.c
-    usb_descriptors.c
-    hog_host_demo.c
-    bt_example_common.c
-    Common.c
-    )  
+    bridge/bridge.c
+    bridge/report_queue.c
+    bridge/log_console.c
+    ble/ble_bonds.c
+    ble/ble_coordinator.c
+    ble/ble_events.c
+    ble/ble_host.c
+    ble/indicators.c
+    usb/usb_device.c
+    usb/usb_hid.c
+    usb/usb_descriptors.c
+    )
 target_link_libraries(picow_ble_usb_hid_bridge
     pico_stdlib
     pico_multicore
@@ -63,27 +70,30 @@ target_link_libraries(picow_ble_usb_hid_bridge
     pico_btstack_cyw43
     pico_btstack_flash_bank
     pico_cyw43_arch_threadsafe_background
-    )   
+    )
 target_include_directories(picow_ble_usb_hid_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/ble
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb
     )
 target_compile_definitions(picow_ble_usb_hid_bridge PRIVATE
     CYW43_LWIP=0
     )
-    
+
 if(ENABLE_USB_LOGGING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_USB_LOGGING=1)
-endif()    
-    
+endif()
+
 if(ENABLE_HEARTBEAT_LOGS)
     target_compile_definitions(
         ${PROJECT_NAME}
         PRIVATE ENABLE_HEARTBEAT_LOGS=1
     )
-endif()    
-    
-pico_btstack_make_gatt_header(picow_ble_usb_hid_bridge PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR}/hog_host_demo.gatt
+endif()
+
+pico_btstack_make_gatt_header(picow_ble_usb_hid_bridge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/ble/device_profile.gatt
     )
 
 # Route the log console over a USB CDC-ACM serial port instead of UART.
