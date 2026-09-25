@@ -84,7 +84,7 @@ typedef struct {
 
 typedef struct {
     uint8_t count;
-    le_device_addr_t entries[MAX_HID_DEVICES];
+    le_device_addr_t entries[MAX_KNOWN_DEVICES];
 } bonded_list_t;
 
 typedef enum {
@@ -802,7 +802,7 @@ static void load_bonded_list(void)
     if (btstack_tlv_singleton_impl) {
         int len = btstack_tlv_singleton_impl->get_tag(btstack_tlv_singleton_context, TLV_TAG_HOGD,
                                                       (uint8_t *)&bonded_list, sizeof(bonded_list));
-        if (len == sizeof(bonded_list) && bonded_list.count > 0 && bonded_list.count <= MAX_HID_DEVICES) {
+        if (len == sizeof(bonded_list) && bonded_list.count > 0 && bonded_list.count <= MAX_KNOWN_DEVICES) {
             has_bonded_device = true;
             BLE_LOG("Loaded %d bonded device(s)\n", bonded_list.count);
         } else {
@@ -840,7 +840,7 @@ static void add_bonded_entry(const bd_addr_t addr, bd_addr_type_t addr_type)
     // list fills with stale addresses from earlier pairings of the same device.
     // When it is full, evict the oldest entry (FIFO) so the device we just paired
     // always fits and is remembered for auto-reconnect.
-    if (bonded_list.count >= MAX_HID_DEVICES) {
+    if (bonded_list.count >= MAX_KNOWN_DEVICES) {
         BLE_LOG("Bonded list full; evicting oldest %s\n",
                 bd_addr_to_str(bonded_list.entries[0].addr));
         for (uint8_t i = 0; i + 1 < bonded_list.count; i++) {
