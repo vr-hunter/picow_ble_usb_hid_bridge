@@ -1,0 +1,70 @@
+name: Build release binaries
+
+# Build the pico_w and pico2_w .uf2 binaries and attach them to the release.
+# Fires when a release is created, and can be run on demand (the binaries are
+# then available as workflow artifacts instead of being attached to a release).
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PICO_SDK_VERSION: 2.2.0
+  PROJECT: picow_ble_usb_hid_bridge
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Install ARM GCC toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Checkout Pico SDK
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_VERSION }}
+          path: pico-sdk
+
+      # The CYW43 (Wi-Fi/BLE radio) driver used by the Pico W pulls in lwip,
+      # which lives in a submodule and must be initialised before building.
+      - name: Initialise Pico SDK submodules
+        working-directory: pico-sdk
+        run: git submodule update --init --recursive
+
+      - name: Build firmware (pico_w + pico2_w)
+        run: |
+          set -euo pipefail
+          for board in pico_w pico2_w; do
+            echo "=== Building ${board} ==="
+            cmake -S src -B "build/${board}" \
+              -DPICO_BOARD="${board}" \
+              -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build "build/${board}" --parallel
+            mkdir -p dist
+            cp "build/${board}/${PROJECT}.uf2" "dist/${PROJECT}_${board}.uf2"
+          done
+          ls -l dist
+
+      - name: Upload binaries to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dist/*.uf2
+
+      - name: Upload binaries as workflow artifacts
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${PROJECT}-binaries
+          path: dist/*.uf2
