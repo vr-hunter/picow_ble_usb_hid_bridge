@@ -7,12 +7,13 @@ on:
   release:
     types: [created]
   workflow_dispatch:
+  push:
 
 permissions:
   contents: write
 
 env:
-  PICO_SDK_VERSION: 2.2.0
+  PICO_SDK_VERSION: 2.3.1
   PROJECT: picow_ble_usb_hid_bridge
 
 jobs:
